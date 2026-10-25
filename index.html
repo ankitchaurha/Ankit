@@ -151,8 +151,38 @@ catch(e){$('heard').textContent='⚠ '+e.message}
 stopper=null;busy=false;setBtn(false)}
 function addItem(id,i){const L=LOG.find(x=>x.id===id);STOCK[i].qty+=L.p.qty;L.ok=true;L.p={...L.p,i,name:STOCK[i].name+' ('+STOCK[i].form+')',score:1};render()}
 function render(){const L=LOG[0],items=L?LOG.filter(x=>x.b===L.b).reverse():[];
-$('res').innerHTML=items.map(l=>l.p?`<div style="margin-top:6px"><b>${esc(l.p.name)}</b> × ${l.p.qty} ${l.ok?'✅':'⚠ tap the right one'} <small>“${esc(l.text)}”</small>`+(l.ok?'':'<div>'+l.p.ids.map(i=>`<button style="width:auto;padding:8px 12px;margin:4px 4px 0 0;font-size:14px" onclick="addItem(${l.id},${i})">${esc(STOCK[i].name+' '+STOCK[i].form)}</button>`).join('')+'</div>')+'</div>':'<div>⚠ nothing understood</div>').join('');
+$('res').innerHTML=items.map(l=>l.p?`<div style="margin-top:6px"><b>${esc(l.p.name)}</b> × ${l.p.qty} ${l.ok?'✅ <button style="width:auto;padding:2px 8px;margin:0 4px;font-size:12px;background:var(--bad);color:#fff" onclick="removeItem('+l.id+')">remove</button>':'⚠ tap the right one'} <small>“${esc(l.text)}”</small>`+(l.ok?'':'<div>'+l.p.ids.map(i=>`<button style="width:auto;padding:8px 12px;margin:4px 4px 0 0;font-size:14px" onclick="addItem(${l.id},${i})">${esc(STOCK[i].name+' '+STOCK[i].form)}</button>`).join('')+'</div>')+'</div>':'<div>⚠ nothing understood</div>').join('');
 $('log').innerHTML=LOG.map(l=>`<tr><td>${esc(l.m)}</td><td>${esc(l.text||'')}</td><td>${l.p?esc(l.p.name)+(l.ok?'':' ⚠'):'—'}</td><td>${l.p?l.p.qty:''}</td><td>${l.ms}</td></tr>`).join('');
 $('stock').innerHTML=STOCK.filter(x=>x.qty).map(x=>`<tr><td>${esc(x.name)} <small>${x.form}</small></td><td>${x.qty}</td></tr>`).join('')||'<tr><td><small>Nothing added yet</small></td></tr>'}
+METHODS.splice(1,0,{id:'gemini',name:'Gemini · say many items',kind:'gem'});
+const mi=document.createElement('input');mi.id='model';mi.value='gemini-flash-latest';mi.placeholder='Gemini model name';mi.style.display='none';$('key').after(mi);
+function pick(i){if(busy)return;cur=i;const m=METHODS[i];$('key').style.display=(m.kind==='rec'||m.kind==='gem')?'':'none';$('key').value=keys[m.id]||'';$('key').placeholder=m.name+' API key (stays in this page)';$('typed').style.display=m.kind==='text'?'':'none';$('model').style.display=m.kind==='gem'?'':'none';setBtn(false);
+$('meth').innerHTML=METHODS.map((x,j)=>`<div class="m ${j===i?'on':''}" onclick="pick(${j})">${x.name}</div>`).join('')}
+async function toWav(blob){const ctx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:16000}),buf=await ctx.decodeAudioData(await blob.arrayBuffer()),d=buf.getChannelData(0),n=d.length,ab=new ArrayBuffer(44+n*2),v=new DataView(ab);
+const S=(o,s)=>[...s].forEach((c,i)=>v.setUint8(o+i,c.charCodeAt(0)));
+S(0,'RIFF');v.setUint32(4,36+n*2,true);S(8,'WAVEfmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,16000,true);v.setUint32(28,32000,true);v.setUint16(32,2,true);v.setUint16(34,16,true);S(36,'data');v.setUint32(40,n*2,true);
+for(let i=0;i<n;i++){const x=Math.max(-1,Math.min(1,d[i]));v.setInt16(44+i*2,x<0?x*32768:x*32767,true)}ctx.close();return new Blob([ab],{type:'audio/wav'})}
+async function askGemini(b64,key,model){const list=STOCK.map((x,i)=>`${i}: ${x.name} ${x.form}`).join('\n');
+const prompt=`You help a pharmacy in India add stock. The audio is a person saying several items in Hindi, English or mixed (for example "dolo 650 do patti", "bukhar ki goli teen"). Hindi numbers: ek=1 do=2 teen=3 char=4 paanch=5 chhe=6 saat=7 aath=8 nau=9 das=10. Match every item to this list by name, strength and form (tab, syrup, injection). Return ONLY JSON: {"items":[{"heard":"what was said","id":number or null,"qty":number,"options":[up to 3 ids]}]}. Use id null when not sure and put the likely ids in options. qty defaults to 1. Never invent items.\nLIST:\n${list}`;
+const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,{method:'POST',headers:{'x-goog-api-key':key,'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt},{inline_data:{mime_type:'audio/wav',data:b64}}]}],generationConfig:{responseMimeType:'application/json',temperature:0}})});
+const j=await r.json();if(!r.ok)throw new Error(j.error?j.error.message:JSON.stringify(j));
+const t=j.candidates[0].content.parts.map(p=>p.text||'').join('');return JSON.parse(t.replace(/```json|```/g,'').trim()).items||[]}
+const tg=toggle;
+toggle=async function(){const m=METHODS[cur];if(m.kind!=='gem')return tg();
+if(stopper){stopper();return}if(busy)return;busy=true;setBtn(true);
+try{const key=(keys[m.id]||'').trim();if(!key)throw new Error('Enter your Gemini API key first');
+const s=await navigator.mediaDevices.getUserMedia({audio:true}),mr=new MediaRecorder(s),ch=[];mr.ondataavailable=e=>ch.push(e.data);
+const done=new Promise(r=>mr.onstop=r);stopper=()=>mr.stop();mr.start();$('heard').textContent='Listening… tap Stop when done';await done;
+s.getTracks().forEach(t=>t.stop());stopper=null;const t0=performance.now();$('heard').textContent='Thinking…';
+const wav=await toWav(new Blob(ch,{type:mr.mimeType})),b64=await new Promise(r=>{const f=new FileReader();f.onload=()=>r(f.result.split(',')[1]);f.readAsDataURL(wav)});
+const items=await askGemini(b64,key,$('model').value.trim()||'gemini-flash-latest'),ms=Math.round(performance.now()-t0),b=++uid;
+if(!items.length)throw new Error('Nothing understood');
+$('heard').textContent=items.map(x=>x.heard).join(', ');
+items.forEach(x=>{const id=Number.isInteger(x.id)&&STOCK[x.id]?x.id:null,q=Math.max(1,+x.qty||1),ids=(x.options||[]).filter(k=>STOCK[k]);
+if(id!==null){STOCK[id].qty+=q;LOG.unshift({id:++uid,b,m:m.name,text:x.heard,ms,ok:true,p:{i:id,name:STOCK[id].name+' ('+STOCK[id].form+')',qty:q,score:1,ids}})}
+else LOG.unshift({id:++uid,b,m:m.name,text:x.heard,ms,ok:false,p:{i:ids[0],name:'“'+x.heard+'” (which one?)',qty:q,score:.5,ids}})});render()}
+catch(e){$('heard').textContent='⚠ '+e.message}
+stopper=null;busy=false;setBtn(false)};
+function removeItem(id){const L=LOG.find(x=>x.id===id);STOCK[L.p.i].qty-=L.p.qty;L.ok=false;L.p.ids=[...new Set([L.p.i,...(L.p.ids||[])])];render()}
 pick(0);render();
 </script></body></html>
