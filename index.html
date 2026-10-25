@@ -112,4 +112,47 @@ const b=sc[0],it=STOCK[b.i],sn=norm(it.name).split(' ').filter(x=>/^\d/.test(x))
 w0.forEach(x=>{if(sn.includes(x))return;if(/^\d{1,4}$/.test(x))q=+x;else if(NUM[x])q=NUM[x]});
 return{i:b.i,name:`${it.name} (${it.form})`,qty:q,score:Math.min(b.s,1),ids:sc.slice(0,3).map(c=>c.i),alt:sc.slice(1,3).map(c=>STOCK[c.i].name+' '+STOCK[c.i].form).join(', ')}}
 pick(0);render();
+</script>
+<script>
+let uid=0;
+METHODS.unshift({id:'multi',name:'Multi · say many items',kind:'multi',lang:'hi-IN'});
+const UNITS=new Set(['patti','patta','strip','strips','bottle','botal','sisi','piece','pieces','box','dabba','vial','pack','packet','nos']),SEP=new Set(['aur','and','phir','fir','then','next']);
+const F3=['Dolo 650','Paracetamol 500','Crocin 500'],CG=['Corex DX','Benadryl','Ascoril LS'],PN=['Combiflam','Diclofenac 50','Ibuprofen 400'],CD=['Sinarest','Cetirizine 10'],AC=['Digene','Pantoprazole 40'],VM=['Ondansetron 4','Domperidone 10'];
+const AL={bukhar:F3,fever:F3,sardi:CD,jukam:CD,khansi:CG,cough:CG,dard:PN,pain:PN,acidity:AC,gas:AC,gais:AC,ulti:VM,vomiting:VM,sugar:['Metformin 500','Glimepiride 2'],thyroid:['Thyronorm 50','Eltroxin 50'],calcium:['Shelcal 500'],allergy:['Allegra 120','Cetirizine 10']};
+const base=parse;
+parse=function(t){const p=base(t),hit=norm(String(t)).split(' ').find(x=>AL[x]);
+if(hit&&(!p||p.score<.75)){const ids=AL[hit].map(n=>STOCK.findIndex(s=>s.name===n)).filter(i=>i>=0);return{i:ids[0],name:'“'+hit+'” (which one?)',qty:p?p.qty:1,score:.5,ids,alt:''}}return p};
+const isN=w=>/^\d+$/.test(w)||!!NUM[w];
+function splitItems(text){const t=norm(String(text).replace(/[०-९]/g,d=>'०१२३४५६७८९'.indexOf(d))).split(' ').filter(Boolean),segs=[];let cur=[];
+const flush=()=>{if(cur.some(x=>!FORMS[x]&&!isN(x)&&!UNITS.has(x)))segs.push(cur.join(' '));cur=[]};
+for(let i=0;i<t.length;i++){const w=t[i],nx=t[i+1];
+if(SEP.has(w)){flush();continue}
+if(UNITS.has(w)){cur.push(w);flush();continue}
+cur.push(w);
+if(isN(w)&&cur.length>1&&!/^\d{3,}$/.test(w)){const p=parse(cur.slice(0,-1).join(' '));
+const str=p&&p.ids&&p.ids.some(k=>norm(STOCK[k].name).split(' ').includes(w));
+if(!str&&!(nx&&(isN(nx)||UNITS.has(nx))))flush()}}
+flush();return segs}
+function listenMulti(lang){return new Promise((res,rej)=>{const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR)return rej(new Error('Use Chrome'));let acc='',stop=false,r,ts=0;
+const go=()=>{r=new SR();r.lang=lang;r.continuous=true;r.interimResults=true;
+r.onresult=e=>{let im='';for(let i=e.resultIndex;i<e.results.length;i++){const x=e.results[i];if(x.isFinal)acc+=' '+x[0].transcript;else im+=' '+x[0].transcript}$('heard').textContent=(acc+im).trim()};
+r.onerror=e=>{if(e.error!=='no-speech'&&e.error!=='aborted'){stop=true;rej(new Error(e.error))}};
+r.onend=()=>{if(stop)res({text:acc.trim(),ms:Math.round(performance.now()-ts)});else go()};r.start()};
+stopper=()=>{stop=true;ts=performance.now();r.stop()};go()})}
+function runItems(name,text,ms,b){$('heard').textContent=text||'(empty)';const segs=splitItems(text);
+if(!segs.length)LOG.unshift({id:++uid,b,m:name,text,ms,p:null,ok:false});
+segs.forEach(s=>{const p=parse(s),ok=!!p&&p.score>=.6;if(ok)STOCK[p.i].qty+=p.qty;LOG.unshift({id:++uid,b,m:name,text:s,ms,p,ok})});render()}
+async function toggle(){if(stopper){stopper();return}if(busy)return;busy=true;const m=METHODS[cur];setBtn(true);
+try{const b=++uid;
+if(m.kind==='text')runItems(m.name,$('typed').value,0,b);
+else if(m.kind==='ws'){const r=await listen(m.lang),x=best(r.alts);runItems(m.name,x?x.t:r.alts[0],r.ms,b)}
+else{const r=await listenMulti(m.lang);if(!r.text)throw new Error('No speech heard');runItems(m.name,r.text,r.ms,b)}}
+catch(e){$('heard').textContent='⚠ '+e.message}
+stopper=null;busy=false;setBtn(false)}
+function addItem(id,i){const L=LOG.find(x=>x.id===id);STOCK[i].qty+=L.p.qty;L.ok=true;L.p={...L.p,i,name:STOCK[i].name+' ('+STOCK[i].form+')',score:1};render()}
+function render(){const L=LOG[0],items=L?LOG.filter(x=>x.b===L.b).reverse():[];
+$('res').innerHTML=items.map(l=>l.p?`<div style="margin-top:6px"><b>${esc(l.p.name)}</b> × ${l.p.qty} ${l.ok?'✅':'⚠ tap the right one'} <small>“${esc(l.text)}”</small>`+(l.ok?'':'<div>'+l.p.ids.map(i=>`<button style="width:auto;padding:8px 12px;margin:4px 4px 0 0;font-size:14px" onclick="addItem(${l.id},${i})">${esc(STOCK[i].name+' '+STOCK[i].form)}</button>`).join('')+'</div>')+'</div>':'<div>⚠ nothing understood</div>').join('');
+$('log').innerHTML=LOG.map(l=>`<tr><td>${esc(l.m)}</td><td>${esc(l.text||'')}</td><td>${l.p?esc(l.p.name)+(l.ok?'':' ⚠'):'—'}</td><td>${l.p?l.p.qty:''}</td><td>${l.ms}</td></tr>`).join('');
+$('stock').innerHTML=STOCK.filter(x=>x.qty).map(x=>`<tr><td>${esc(x.name)} <small>${x.form}</small></td><td>${x.qty}</td></tr>`).join('')||'<tr><td><small>Nothing added yet</small></td></tr>'}
+pick(0);render();
 </script></body></html>
